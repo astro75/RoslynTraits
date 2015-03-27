@@ -138,8 +138,14 @@ namespace ConsoleApplication1 {
       }
       else if (member is MethodDeclarationSyntax) {
         var method = (MethodDeclarationSyntax) member;
-        if (method.Modifiers.Any(m => m.Kind() == SyntaxKind.AbstractKeyword)) {
-          list.Add(method.WithModifiers(SF.TokenList()));
+        if (method.Modifiers.Any(m => m.Kind() == SyntaxKind.AbstractKeyword || m.Kind() == SyntaxKind.PublicKeyword) 
+          && method.Modifiers.All(m => m.Kind() != SyntaxKind.OverrideKeyword)
+        ) {
+          list.Add(
+            method.WithModifiers(SF.TokenList())
+            .WithBody(null)
+            .WithSemicolonToken(SF.Token(SyntaxKind.SemicolonToken))
+          );
         }
       }
       return list;
