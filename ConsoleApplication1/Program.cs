@@ -145,17 +145,25 @@ namespace ConsoleApplication1 {
       return list;
     }
 
-    static bool handlePublicFields(FieldDeclarationSyntax field, List<MemberDeclarationSyntax> list,
-      bool useMmodifiers = false) {
-      if (field.Modifiers.Any(m => m.Kind() == SyntaxKind.PublicKeyword)) {
+    static bool handlePublicFields(
+      FieldDeclarationSyntax field, List<MemberDeclarationSyntax> list,
+      bool useMmodifiers = false
+    ) {
+      if (field.Modifiers.Any(m => m.IsKind(SyntaxKind.PublicKeyword))) {
         foreach (var variable in field.Declaration.Variables) {
           var newProp = SF.PropertyDeclaration(field.Declaration.Type, variable.Identifier)
             .AddAccessorListAccessors(
               SF.AccessorDeclaration(SyntaxKind.GetAccessorDeclaration)
-                .WithSemicolonToken(SF.Token(SyntaxKind.SemicolonToken)),
+                .WithSemicolonToken(SF.Token(SyntaxKind.SemicolonToken)));
+          if (field.Modifiers.All(m => m.Kind() != SyntaxKind.ReadOnlyKeyword)) {
+            newProp = newProp.AddAccessorListAccessors(
               SF.AccessorDeclaration(SyntaxKind.SetAccessorDeclaration)
                 .WithSemicolonToken(SF.Token(SyntaxKind.SemicolonToken)));
-          if (useMmodifiers) newProp = newProp.WithModifiers(field.Modifiers);
+          }
+          if (useMmodifiers)
+            newProp = newProp.WithModifiers(SF.TokenList(
+              field.Modifiers.Where(m => m.Kind() != SyntaxKind.ReadOnlyKeyword)
+            ));
           list.Add(newProp);
         }
         return true;
