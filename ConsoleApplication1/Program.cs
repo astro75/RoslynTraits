@@ -21,19 +21,38 @@ namespace ConsoleApplication1 {
         var model = doc.GetSemanticModelAsync().Result;
         var abstracts = root.DescendantNodes()
           .OfType<ClassDeclarationSyntax>()
-          .Where(c => c.Modifiers.Any(m => m.Kind() == SyntaxKind.AbstractKeyword))
+          .Where(c => c.Modifiers.has(SyntaxKind.AbstractKeyword))
           .Where(c => c.Identifier.Text.EndsWith("Trait")).ToList();
         if (abstracts.Count == 0) continue;
         var newName = doc.Name.Replace(".cs", ".trait.interface.generated.cs");
         var cu = SF.CompilationUnit();
         foreach (var abs in abstracts) {
+          var mutableAbs = abs;
           var interf =
-            SF.InterfaceDeclaration("T" + abs.Identifier.Text.Replace("Trait", ""))
+            SF.InterfaceDeclaration(abstractNameToInterfaceName(abs.Identifier.Text))
               .WithModifiers(SF.TokenList(abs.Modifiers.Where(m => m.Kind() != SyntaxKind.AbstractKeyword)));
           interf = interf.WithMembers(SF.List(abs.Members.SelectMany(interfaceMember)));
+          var symbol = model.GetDeclaredSymbol(abs);
+          if (symbol.BaseType.Name.EndsWith("Trait")) {
+            interf = interf.WithBaseList(
+              SF.BaseList(SF.SingletonSeparatedList<BaseTypeSyntax>(
+                SF.SimpleBaseType(SF.ParseTypeName(
+                  abstractNameToInterfaceName(symbol.BaseType.Name)
+                ))
+              ))
+            );
+          }
+          {
+            while (symbol.BaseType.Name.EndsWith("Trait")) {
+              symbol = symbol.BaseType;
+
+              var absParent = (ClassDeclarationSyntax) symbol.DeclaringSyntaxReferences.First().GetSyntax();
+              mutableAbs = mutableAbs.AddMembers(absParent.Members.ToArray());
+            }
+          }
           var nsName = handleNamespaces(model, abs, interf, ref cu);
           var id = (nsName + "." + interf.Identifier).TrimStart('.');
-          listAll.Add(Tuple.Create(id, abs));
+          listAll.Add(Tuple.Create(id, mutableAbs));
         }
         proj = addReplaceDocument(proj, newName, cu, ws);
       }
@@ -43,7 +62,7 @@ namespace ConsoleApplication1 {
         var root = doc.GetSyntaxRootAsync().Result;
         var classes = root.DescendantNodes()
           .OfType<ClassDeclarationSyntax>()
-          .Where(c => c.Modifiers.All(m => m.Kind() != SyntaxKind.AbstractKeyword))
+          .Where(c => c.Modifiers.hasNot(SyntaxKind.AbstractKeyword))
           .Select(c => Tuple.Create(c, model.GetDeclaredSymbol(c)))
           .Where(tpl => tpl.Item2.Interfaces.Any())
           .ToList();
@@ -73,6 +92,10 @@ namespace ConsoleApplication1 {
         }
       }
       ws.TryApplyChanges(proj.Solution);
+    }
+
+    static string abstractNameToInterfaceName(string name) {
+      return "T" + name.Replace("Trait", "");
     }
 
     static Project addReplaceDocument(Project proj, string newName, CompilationUnitSyntax cu, MSBuildWorkspace ws) {
@@ -117,7 +140,10 @@ namespace ConsoleApplication1 {
         }
         else if (member is MethodDeclarationSyntax) {
           var method = (MethodDeclarationSyntax) member;
-          if (method.Modifiers.All(m => m.Kind() != SyntaxKind.AbstractKeyword)) {
+          if (method.hasNot(SyntaxKind.AbstractKeyword)) {
+            if (method.has(SyntaxKind.OverrideKeyword)) {
+              method = method.remove(SyntaxKind.OverrideKeyword);
+            }
             list.Add(method);
           }
         }
@@ -138,8 +164,8 @@ namespace ConsoleApplication1 {
       }
       else if (member is MethodDeclarationSyntax) {
         var method = (MethodDeclarationSyntax) member;
-        if (method.Modifiers.Any(m => m.Kind() == SyntaxKind.AbstractKeyword || m.Kind() == SyntaxKind.PublicKeyword) 
-          && method.Modifiers.All(m => m.Kind() != SyntaxKind.OverrideKeyword)
+        if ((method.has(SyntaxKind.AbstractKeyword) || method.has(SyntaxKind.PublicKeyword)) 
+          && method.hasNot(SyntaxKind.OverrideKeyword)
         ) {
           list.Add(
             method.WithModifiers(SF.TokenList())
@@ -155,7 +181,7 @@ namespace ConsoleApplication1 {
       FieldDeclarationSyntax field, List<MemberDeclarationSyntax> list,
       bool useMmodifiers = false
     ) {
-      if (field.Modifiers.Any(m => m.IsKind(SyntaxKind.PublicKeyword))) {
+      if (field.Modifiers.has(SyntaxKind.PublicKeyword)) {
         foreach (var variable in field.Declaration.Variables) {
           var newProp = SF.PropertyDeclaration(field.Declaration.Type, variable.Identifier)
             .AddAccessorListAccessors(
@@ -167,14 +193,46 @@ namespace ConsoleApplication1 {
                 .WithSemicolonToken(SF.Token(SyntaxKind.SemicolonToken)));
           }
           if (useMmodifiers)
-            newProp = newProp.WithModifiers(SF.TokenList(
-              field.Modifiers.Where(m => m.Kind() != SyntaxKind.ReadOnlyKeyword)
-            ));
+            newProp = newProp.WithModifiers(field.Modifiers).remove(SyntaxKind.ReadOnlyKeyword);
           list.Add(newProp);
         }
         return true;
       }
       return false;
+    }
+  }
+
+  internal static class Exts {
+    public static bool has(this BasePropertyDeclarationSyntax decl, SyntaxKind kind) {
+      return decl.Modifiers.has(kind);
+    }
+
+    public static bool has(this BaseMethodDeclarationSyntax decl, SyntaxKind kind) {
+      return decl.Modifiers.has(kind);
+    }
+
+    public static bool has(this SyntaxTokenList mods, SyntaxKind kind) {
+      return mods.Any(m => m.IsKind(kind));
+    }
+
+    public static bool hasNot(this BasePropertyDeclarationSyntax decl, SyntaxKind kind) {
+      return decl.Modifiers.hasNot(kind);
+    }
+
+    public static bool hasNot(this BaseMethodDeclarationSyntax decl, SyntaxKind kind) {
+      return decl.Modifiers.hasNot(kind);
+    }
+
+    public static bool hasNot(this SyntaxTokenList mods, SyntaxKind kind) {
+      return mods.Any(m => !m.IsKind(kind));
+    }
+
+    public static PropertyDeclarationSyntax remove(this PropertyDeclarationSyntax decl, SyntaxKind kind) {
+      return decl.WithModifiers(SF.TokenList(decl.Modifiers.Where(m => !m.IsKind(kind))));
+    }
+
+    public static MethodDeclarationSyntax remove(this MethodDeclarationSyntax decl, SyntaxKind kind) {
+      return decl.WithModifiers(SF.TokenList(decl.Modifiers.Where(m => !m.IsKind(kind))));
     }
   }
 }
