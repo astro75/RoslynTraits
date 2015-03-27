@@ -35,14 +35,7 @@ namespace ConsoleApplication1 {
           var id = (nsName + "." + interf.Identifier).TrimStart('.');
           listAll.Add(Tuple.Create(id, abs));
         }
-        try {
-          proj = proj.RemoveDocument(proj.Documents.First(d => d.Name == newName).Id);
-        }
-        catch {
-          // ignored
-        }
-        var newDoc = proj.AddDocument(newName, Formatter.Format(cu, ws));
-        proj = newDoc.Project;
+        proj = addReplaceDocument(proj, newName, cu, ws);
       }
       foreach (var doc in proj.Documents) {
         if (doc.Name.EndsWith(".generated.cs")) continue;
@@ -76,17 +69,22 @@ namespace ConsoleApplication1 {
           }
         }
         if (worked) {
-          try {
-            proj = proj.RemoveDocument(proj.Documents.First(d => d.Name == newName).Id);
-          }
-          catch {
-            // ignored
-          }
-          var newDoc = proj.AddDocument(newName, Formatter.Format(cu, ws));
-          proj = newDoc.Project;
+          proj = addReplaceDocument(proj, newName, cu, ws);
         }
       }
       ws.TryApplyChanges(proj.Solution);
+    }
+
+    static Project addReplaceDocument(Project proj, string newName, CompilationUnitSyntax cu, MSBuildWorkspace ws) {
+      try {
+        proj = proj.RemoveDocument(proj.Documents.First(d => d.Name == newName).Id);
+      }
+      catch {
+        // ignored
+      }
+      var newDoc = proj.AddDocument(newName, Formatter.Format(cu, ws));
+      proj = newDoc.Project;
+      return proj;
     }
 
     static string handleNamespaces(
