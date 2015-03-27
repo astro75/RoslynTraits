@@ -141,9 +141,8 @@ namespace ConsoleApplication1 {
         else if (member is MethodDeclarationSyntax) {
           var method = (MethodDeclarationSyntax) member;
           if (method.hasNot(SyntaxKind.AbstractKeyword)) {
-            if (method.has(SyntaxKind.OverrideKeyword)) {
-              method = method.remove(SyntaxKind.OverrideKeyword);
-            }
+            method = method.remove(SyntaxKind.OverrideKeyword);
+            method = method.remove(SyntaxKind.VirtualKeyword);
             list.Add(method);
           }
         }
@@ -187,7 +186,7 @@ namespace ConsoleApplication1 {
             .AddAccessorListAccessors(
               SF.AccessorDeclaration(SyntaxKind.GetAccessorDeclaration)
                 .WithSemicolonToken(SF.Token(SyntaxKind.SemicolonToken)));
-          if (field.Modifiers.All(m => m.Kind() != SyntaxKind.ReadOnlyKeyword)) {
+          if (field.Modifiers.hasNot(SyntaxKind.ReadOnlyKeyword)) {
             newProp = newProp.AddAccessorListAccessors(
               SF.AccessorDeclaration(SyntaxKind.SetAccessorDeclaration)
                 .WithSemicolonToken(SF.Token(SyntaxKind.SemicolonToken)));
@@ -224,7 +223,7 @@ namespace ConsoleApplication1 {
     }
 
     public static bool hasNot(this SyntaxTokenList mods, SyntaxKind kind) {
-      return mods.Any(m => !m.IsKind(kind));
+      return mods.All(m => !m.IsKind(kind));
     }
 
     public static PropertyDeclarationSyntax remove(this PropertyDeclarationSyntax decl, SyntaxKind kind) {
