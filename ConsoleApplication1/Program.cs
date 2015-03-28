@@ -10,14 +10,41 @@ using SF = Microsoft.CodeAnalysis.CSharp.SyntaxFactory;
 
 namespace ConsoleApplication1 {
 
-  struct Info {
-    public readonly string id, idForExtending;
-    public readonly ClassDeclarationSyntax abs;
+  class Info {
+    public readonly string id;
+    public readonly ClassDeclarationSyntax decl;
+    public List<Info> parents;
+    bool isLinearized;
+    bool marked;
 
-    public Info(string id, string idForExtending, ClassDeclarationSyntax abs) {
+    public Info(string id, ClassDeclarationSyntax decl) {
       this.id = id;
-      this.idForExtending = idForExtending;
-      this.abs = abs;
+      this.decl = decl;
+    }
+
+    public Info(string id, ClassDeclarationSyntax decl, List<Info> parents) {
+      this.id = id;
+      this.decl = decl;
+      this.parents = parents;
+    }
+
+    public List<Info> getLinearization() {
+      if (!isLinearized) {
+        if (marked) throw new Exception("Cyclic reference traits: " + id);
+        marked = true;
+        var newParents = new List<Info> {this};
+        foreach (var parent in parents) {
+          var right = parent.getLinearization();
+          for (var i = newParents.Count - 1; i >= 1; i--) {
+            if (right.IndexOf(newParents[i]) != -1) newParents.RemoveAt(i);
+          }
+          newParents.AddRange(right);
+        }
+        marked = false;
+        isLinearized = true;
+        parents = newParents;
+      }
+      return parents;
     }
   }
 
@@ -30,9 +57,8 @@ namespace ConsoleApplication1 {
     }
 
     static Solution run(Solution sol, MSBuildWorkspace ws) {
-      var listAll = new List<Info>();
-      foreach (var doc in sol.Projects.SelectMany(s => s.Documents)) {
-        if (doc.Name.EndsWith(".generated.cs")) continue;
+      var listInfos = new List<Info>();
+      foreach (var doc in sol.allDocs()) {
         var root = doc.GetSyntaxRootAsync().Result;
         var model = doc.GetSemanticModelAsync().Result;
         var abstracts = root.DescendantNodes()
@@ -52,13 +78,26 @@ namespace ConsoleApplication1 {
           var nsName = handleNamespaces(model, abs, interf, ref cu);
           handleNamespaces(model, abs, interf2, ref cu);
           var id = (nsName + "." + interf.Identifier).TrimStart('.');
-          var id2 = (nsName + "." + interf2.Identifier).TrimStart('.');
-          listAll.Add(new Info(id, id2, abs));
+          listInfos.Add(new Info(id, abs));
         }
-        sol = addReplaceDocument(doc.Project, newName, cu, ws).Solution;
+        sol = addReplaceDocument(sol.GetDocument(doc.Id).Project, newName, cu, ws).Solution;
       }
-      foreach (var doc in sol.Projects.SelectMany(s => s.Documents)) {
-        if (doc.Name.EndsWith(".generated.cs")) continue;
+
+      {
+        foreach (var info in listInfos) {
+          var doc = sol.GetDocument(info.decl.SyntaxTree);
+          var model = doc.GetSemanticModelAsync().Result;
+          var symbol = model.GetDeclaredSymbol(info.decl);
+          var parents = symbol.Interfaces
+            .Select(i => extendableToInterface(i.ToString()))
+            .Select(id => listInfos.FirstOrDefault(info2 => info2.id == id))
+            .Where(_ => _ != null)
+            .ToList();
+          info.parents = parents;
+        }
+      }
+      
+      foreach (var doc in sol.allDocs()) {
         var model = doc.GetSemanticModelAsync().Result;
         var root = doc.GetSyntaxRootAsync().Result;
         var classes = root.DescendantNodes()
@@ -73,23 +112,23 @@ namespace ConsoleApplication1 {
         var cu = SF.CompilationUnit();
         var worked = false;
         foreach (var tuple in classes) {
-          var interfaces = tuple.Item2.Interfaces.Select(i => i.ToString());
-          foreach (var imp in interfaces) {
-            foreach (var info in listAll) {
-              if (info.id.Equals(imp)) {
-                var abs = info.abs;
-                var partial =
-                  SF.ClassDeclaration(tuple.Item1.Identifier)
-                    .WithModifiers(addModifier(tuple.Item1.Modifiers, SyntaxKind.PartialKeyword));
-                partial = partial.WithMembers(partial.Members.AddRange(partialMembers(abs.Members)));
-                handleNamespaces(model, tuple.Item1, partial, ref cu);
-                worked = true;
-              }
-            }
+          var parents = tuple.Item2.Interfaces.Select(i => i.ToString())
+            .Select(id => listInfos.FirstOrDefault(info => info.id == id))
+            .Where(_ => _ != null)
+            .ToList();
+          var classInfo = new Info(tuple.Item2.ToString(), tuple.Item1, parents);
+          var partial = SF.ClassDeclaration(tuple.Item1.Identifier)
+            .WithModifiers(addModifier(tuple.Item1.Modifiers, SyntaxKind.PartialKeyword));
+          foreach (var info2 in classInfo.getLinearization()) {
+            if (info2.decl.Modifiers.hasNot(SyntaxKind.AbstractKeyword)) continue;
+            var abs = info2.decl;
+            partial = partial.WithMembers(partial.Members.AddRange(partialMembers(abs.Members)));
+            worked = true;
           }
+          handleNamespaces(model, tuple.Item1, partial, ref cu);
         }
         if (worked) {
-          sol = addReplaceDocument(doc.Project, newName, cu, ws).Solution;
+          sol = addReplaceDocument(sol.GetDocument(doc.Id).Project, newName, cu, ws).Solution;
         }
       }
       return sol;
@@ -100,7 +139,12 @@ namespace ConsoleApplication1 {
     }
 
     static string nameToExtendableInterface(string name) {
-      return "TE" + name.Replace("Trait", "");
+      return "E" + name.Replace("Trait", "");
+    }
+
+    static string extendableToInterface(string name) {
+      var ind = name.LastIndexOf('.');
+      return name.Substring(0, ind + 1) + "T" + name.Substring(ind + 2);
     }
 
     static Project addReplaceDocument(Project proj, string newName, CompilationUnitSyntax cu, MSBuildWorkspace ws) {
@@ -207,6 +251,10 @@ namespace ConsoleApplication1 {
   }
 
   internal static class Exts {
+    public static IEnumerable<Document> allDocs(this Solution sol) {
+      return sol.Projects.SelectMany(s => s.Documents).Where(doc => !doc.Name.EndsWith(".generated.cs"));
+    }
+
     public static bool has(this BasePropertyDeclarationSyntax decl, SyntaxKind kind) {
       return decl.Modifiers.has(kind);
     }
