@@ -183,7 +183,7 @@ namespace ConsoleApplication1 {
       foreach (var member in members) {
         if (member is FieldDeclarationSyntax) {
           var field = (FieldDeclarationSyntax) member;
-          if (!handlePublicFields(field, list, true)) {
+          if (!handlePublicFields(field, list, false)) {
             list.Add(field);
           }
         }
@@ -208,7 +208,7 @@ namespace ConsoleApplication1 {
       var list = new List<MemberDeclarationSyntax>();
       if (member is FieldDeclarationSyntax) {
         var field = (FieldDeclarationSyntax) member;
-        handlePublicFields(field, list);
+        handlePublicFields(field, list, true);
       }
       else if (member is MethodDeclarationSyntax) {
         var method = (MethodDeclarationSyntax) member;
@@ -227,7 +227,7 @@ namespace ConsoleApplication1 {
 
     static bool handlePublicFields(
       FieldDeclarationSyntax field, List<MemberDeclarationSyntax> list,
-      bool useMmodifiers = false
+      bool isInterface
     ) {
       if (field.Modifiers.has(SyntaxKind.PublicKeyword)) {
         foreach (var variable in field.Declaration.Variables) {
@@ -235,12 +235,17 @@ namespace ConsoleApplication1 {
             .AddAccessorListAccessors(
               SF.AccessorDeclaration(SyntaxKind.GetAccessorDeclaration)
                 .WithSemicolonToken(SF.Token(SyntaxKind.SemicolonToken)));
+          if (!isInterface && variable.Initializer != null) {
+            newProp = newProp
+              .WithInitializer(variable.Initializer)
+              .WithSemicolon(SF.Token(SyntaxKind.SemicolonToken));
+          }
           if (field.Modifiers.hasNot(SyntaxKind.ReadOnlyKeyword)) {
             newProp = newProp.AddAccessorListAccessors(
               SF.AccessorDeclaration(SyntaxKind.SetAccessorDeclaration)
                 .WithSemicolonToken(SF.Token(SyntaxKind.SemicolonToken)));
           }
-          if (useMmodifiers)
+          if (!isInterface)
             newProp = newProp.WithModifiers(field.Modifiers).remove(SyntaxKind.ReadOnlyKeyword);
           list.Add(newProp);
         }
