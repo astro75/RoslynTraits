@@ -144,7 +144,8 @@ namespace ConsoleApplication1 {
             .ToList();
           var classInfo = new Info(new SymbolId(tuple.Item2), tuple.Item1, parents);
           var partial = SF.ClassDeclaration(tuple.Item1.Identifier)
-            .WithModifiers(addModifier(tuple.Item1.Modifiers, SyntaxKind.PartialKeyword));
+            .WithModifiers(addModifier(tuple.Item1.Modifiers, SyntaxKind.PartialKeyword))
+            .WithTypeParameterList(tuple.Item1.TypeParameterList);
           foreach (var info2 in classInfo.getLinearization()) {
             if (info2.decl.Modifiers.hasNot(SyntaxKind.AbstractKeyword)) continue;
             var abs = info2.decl;
