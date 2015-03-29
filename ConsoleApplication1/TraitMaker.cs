@@ -43,9 +43,12 @@ namespace RoslynTraits {
           var doc = sol.GetDocument(info.decl.SyntaxTree);
           var model = doc.GetSemanticModelAsync().Result;
           var symbol = model.GetDeclaredSymbol(info.decl);
+          info.id = info.id.withSymbol(symbol);
           var parents = symbol.Interfaces
-            .Select(i => extendableToInterface(new SymbolId(i)))
-            .Select(id => listInfos.FirstOrDefault(info2 => info2.id.Equals(id)))
+            .Select(i => {
+              var id = extendableToInterface(new SymbolId(i));
+              return listInfos.FirstOrDefault(info2 => info2.id.Equals(id))?.withSymbol(i);
+            })
             .Where(_ => _ != null)
             .ToList();
           info.parents = parents;
@@ -67,18 +70,30 @@ namespace RoslynTraits {
         var cu = SF.CompilationUnit();
         var worked = false;
         foreach (var tuple in classes) {
-          var parents = tuple.Item2.Interfaces.Select(i => new SymbolId(i))
-            .Select(id => listInfos.FirstOrDefault(info => info.id.Equals(id)))
-            .Where(_ => _ != null)
-            .ToList();
+          var parents = tuple.Item2.Interfaces.Select(i => {
+            var id = new SymbolId(i);
+            return listInfos.FirstOrDefault(info2 => info2.id.Equals(id))?.withSymbol(i);
+          }).Where(_ => _ != null).ToList();
           var classInfo = new Info(new SymbolId(tuple.Item2), tuple.Item1, parents);
           var partial = SF.ClassDeclaration(tuple.Item1.Identifier)
             .WithModifiers(addModifier(tuple.Item1.Modifiers, SyntaxKind.PartialKeyword))
             .WithTypeParameterList(tuple.Item1.TypeParameterList);
           foreach (var info2 in classInfo.getLinearization()) {
-            if (info2.decl.Modifiers.hasNot(SyntaxKind.AbstractKeyword)) continue;
-            var abs = info2.decl;
-            partial = partial.WithMembers(partial.Members.AddRange(partialMembers(abs.Members)));
+            if (info2.Item1.decl.Modifiers.hasNot(SyntaxKind.AbstractKeyword)) continue;
+            var abs = info2.Item1.decl;
+            var members = abs.Members;
+            var symbol = info2.Item2;
+            var replaces = new List<Tuple<string, string>>();
+            for (var i = 0; i < symbol.Arity; i++) {
+              var str1 = symbol.TypeParameters[0].Name;
+              var str2 = symbol.TypeArguments[0].Name;
+              if (str1 != str2) replaces.Add(Tuple.Create(str1, str2));
+            }
+            if (replaces.Count > 0) {
+              var rewriter = new GenericRewriter(replaces);
+              members = rewriter.VisitList(members);
+            }
+            partial = partial.WithMembers(partial.Members.AddRange(partialMembers(members)));
             worked = true;
           }
           handleNamespaces(model, tuple.Item1, partial, ref cu);
