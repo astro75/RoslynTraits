@@ -12,6 +12,7 @@ namespace RoslynTraits {
   static class TraitMaker {
     public static Solution run(Solution sol, MSBuildWorkspace ws) {
       var listInfos = new List<Info>();
+      var baseRewriter = new BaseTypeRewriter();
       foreach (var doc in sol.allDocs()) {
         var root = doc.GetSyntaxRootAsync().Result;
         var model = doc.GetSemanticModelAsync().Result;
@@ -27,7 +28,8 @@ namespace RoslynTraits {
             SF.InterfaceDeclaration(nameToInterface(abs.Identifier.Text))
               .WithModifiers(abs.Modifiers.remove(SyntaxKind.AbstractKeyword))
               .WithTypeParameterList(abs.TypeParameterList)
-              .WithConstraintClauses(abs.ConstraintClauses);
+              .WithConstraintClauses(abs.ConstraintClauses)
+              .WithBaseList(baseRewriter.VisitListElement(abs.BaseList));
           var interf2 = interf.WithIdentifier(SF.Identifier(nameToExtendableInterface(abs.Identifier.Text)));
           interf = interf.WithMembers(SF.List(abs.Members.SelectMany(interfaceMember)));
 

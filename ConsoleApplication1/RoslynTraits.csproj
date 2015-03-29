@@ -89,6 +89,7 @@
   </ItemGroup>
   <ItemGroup>
     <Compile Include="Extensions.cs" />
+    <Compile Include="BaseTypeRewriter.cs" />
     <Compile Include="GenericRewriter.cs" />
     <Compile Include="Info.cs" />
     <Compile Include="Program.cs" />
