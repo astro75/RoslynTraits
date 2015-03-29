@@ -10,19 +10,40 @@ using SF = Microsoft.CodeAnalysis.CSharp.SyntaxFactory;
 
 namespace ConsoleApplication1 {
 
+  struct SymbolId {
+    public readonly string nspace;
+    public readonly string identifier;
+
+    public SymbolId(string nspace, string identifier) {
+      this.nspace = nspace;
+      this.identifier = identifier;
+    }
+
+    public override string ToString() {
+      return $"{nspace}.{identifier}";
+    }
+
+    public SymbolId(ISymbol symbol) 
+      : this(symbol.ContainingNamespace.ToString(), symbol.Name) {}
+
+    public bool Equals(SymbolId other) {
+      return string.Equals(nspace, other.nspace) && string.Equals(identifier, other.identifier);
+    }
+  }
+
   class Info {
-    public readonly string id;
+    public readonly SymbolId id;
     public readonly ClassDeclarationSyntax decl;
     public List<Info> parents;
     bool isLinearized;
     bool marked;
 
-    public Info(string id, ClassDeclarationSyntax decl) {
+    public Info(SymbolId id, ClassDeclarationSyntax decl) {
       this.id = id;
       this.decl = decl;
     }
 
-    public Info(string id, ClassDeclarationSyntax decl, List<Info> parents) {
+    public Info(SymbolId id, ClassDeclarationSyntax decl, List<Info> parents) {
       this.id = id;
       this.decl = decl;
       this.parents = parents;
@@ -45,6 +66,10 @@ namespace ConsoleApplication1 {
         parents = newParents;
       }
       return parents;
+    }
+
+    public override string ToString() {
+      return $"{id}";
     }
   }
 
@@ -71,14 +96,15 @@ namespace ConsoleApplication1 {
         foreach (var abs in abstracts) {
           var interf =
             SF.InterfaceDeclaration(nameToInterface(abs.Identifier.Text))
-              .WithModifiers(abs.Modifiers.remove(SyntaxKind.AbstractKeyword));
+              .WithModifiers(abs.Modifiers.remove(SyntaxKind.AbstractKeyword))
+              .WithTypeParameterList(abs.TypeParameterList)
+              .WithConstraintClauses(abs.ConstraintClauses);
           var interf2 = interf.WithIdentifier(SF.Identifier(nameToExtendableInterface(abs.Identifier.Text)));
           interf = interf.WithMembers(SF.List(abs.Members.SelectMany(interfaceMember)));
 
-          var nsName = handleNamespaces(model, abs, interf, ref cu);
+          var id = handleNamespaces(model, abs, interf, ref cu);
           handleNamespaces(model, abs, interf2, ref cu);
-          var id = (nsName + "." + interf.Identifier).TrimStart('.');
-          listInfos.Add(new Info(id, abs));
+          listInfos.Add(new Info(new SymbolId(id.nspace, interf.Identifier.Text), abs));
         }
         sol = addReplaceDocument(sol.GetDocument(doc.Id).Project, newName, cu, ws).Solution;
       }
@@ -89,8 +115,8 @@ namespace ConsoleApplication1 {
           var model = doc.GetSemanticModelAsync().Result;
           var symbol = model.GetDeclaredSymbol(info.decl);
           var parents = symbol.Interfaces
-            .Select(i => extendableToInterface(i.ToString()))
-            .Select(id => listInfos.FirstOrDefault(info2 => info2.id == id))
+            .Select(i => extendableToInterface(new SymbolId(i)))
+            .Select(id => listInfos.FirstOrDefault(info2 => info2.id.Equals(id)))
             .Where(_ => _ != null)
             .ToList();
           info.parents = parents;
@@ -112,11 +138,11 @@ namespace ConsoleApplication1 {
         var cu = SF.CompilationUnit();
         var worked = false;
         foreach (var tuple in classes) {
-          var parents = tuple.Item2.Interfaces.Select(i => i.ToString())
-            .Select(id => listInfos.FirstOrDefault(info => info.id == id))
+          var parents = tuple.Item2.Interfaces.Select(i => new SymbolId(i))
+            .Select(id => listInfos.FirstOrDefault(info => info.id.Equals(id)))
             .Where(_ => _ != null)
             .ToList();
-          var classInfo = new Info(tuple.Item2.ToString(), tuple.Item1, parents);
+          var classInfo = new Info(new SymbolId(tuple.Item2), tuple.Item1, parents);
           var partial = SF.ClassDeclaration(tuple.Item1.Identifier)
             .WithModifiers(addModifier(tuple.Item1.Modifiers, SyntaxKind.PartialKeyword));
           foreach (var info2 in classInfo.getLinearization()) {
@@ -142,9 +168,8 @@ namespace ConsoleApplication1 {
       return "E" + name.Replace("Trait", "");
     }
 
-    static string extendableToInterface(string name) {
-      var ind = name.LastIndexOf('.');
-      return name.Substring(0, ind + 1) + "T" + name.Substring(ind + 2);
+    static SymbolId extendableToInterface(SymbolId name) {
+      return new SymbolId(name.nspace, "T" + name.identifier.Substring(1));
     }
 
     static Project addReplaceDocument(Project proj, string newName, CompilationUnitSyntax cu, MSBuildWorkspace ws) {
@@ -159,7 +184,7 @@ namespace ConsoleApplication1 {
       return proj;
     }
 
-    static string handleNamespaces(
+    static SymbolId handleNamespaces(
       SemanticModel model, TypeDeclarationSyntax originalType, TypeDeclarationSyntax newMember,
       ref CompilationUnitSyntax cu
     ) {
@@ -175,7 +200,7 @@ namespace ConsoleApplication1 {
         cu = cu.WithMembers(cu.Members.Add(ns));
       }
       cu = cu.WithUsings(usings);
-      return nsName;
+      return new SymbolId(symbol);
     }
 
     static IEnumerable<MemberDeclarationSyntax> partialMembers(SyntaxList<MemberDeclarationSyntax> members) {
@@ -186,6 +211,10 @@ namespace ConsoleApplication1 {
           if (!handlePublicFields(field, list, false)) {
             list.Add(field);
           }
+        }
+        else if (member is PropertyDeclarationSyntax) {
+          var prop = (PropertyDeclarationSyntax) member;
+          list.Add(prop);
         }
         else if (member is MethodDeclarationSyntax) {
           var method = (MethodDeclarationSyntax) member;
@@ -209,6 +238,10 @@ namespace ConsoleApplication1 {
       if (member is FieldDeclarationSyntax) {
         var field = (FieldDeclarationSyntax) member;
         handlePublicFields(field, list, true);
+      }
+      else if (member is PropertyDeclarationSyntax) {
+        var prop = (PropertyDeclarationSyntax)member;
+        handlePublicFields(prop, list);
       }
       else if (member is MethodDeclarationSyntax) {
         var method = (MethodDeclarationSyntax) member;
@@ -252,6 +285,23 @@ namespace ConsoleApplication1 {
         return true;
       }
       return false;
+    }
+
+    static void handlePublicFields(
+      PropertyDeclarationSyntax prop, List<MemberDeclarationSyntax> list
+    ) {
+      if (prop.Modifiers.has(SyntaxKind.PublicKeyword)) {
+        var newProp = SF.PropertyDeclaration(prop.Type, prop.Identifier)
+          .AddAccessorListAccessors(
+            SF.AccessorDeclaration(SyntaxKind.GetAccessorDeclaration)
+              .WithSemicolonToken(SF.Token(SyntaxKind.SemicolonToken)));
+        if (prop.AccessorList?.Accessors.Any(SyntaxKind.SetAccessorDeclaration) == true) {
+          newProp = newProp.AddAccessorListAccessors(
+            SF.AccessorDeclaration(SyntaxKind.SetAccessorDeclaration)
+              .WithSemicolonToken(SF.Token(SyntaxKind.SemicolonToken)));
+        }
+        list.Add(newProp);
+      }
     }
   }
 
