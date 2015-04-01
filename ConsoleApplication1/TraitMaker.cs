@@ -9,8 +9,8 @@ using Microsoft.CodeAnalysis.MSBuild;
 using SF = Microsoft.CodeAnalysis.CSharp.SyntaxFactory;
 
 namespace RoslynTraits {
-  static class TraitMaker {
-    public static Solution run(Solution sol, MSBuildWorkspace ws) {
+  public static class TraitMaker {
+    public static Solution run(Solution sol, Workspace ws) {
       var listInfos = new List<Info>();
       var baseRewriter = new BaseTypeRewriter();
       foreach (var doc in sol.allDocs()) {
@@ -57,6 +57,32 @@ namespace RoslynTraits {
         }
       }
 
+      {
+        foreach (var info in listInfos) {
+          var doc = sol.GetDocument(info.decl.SyntaxTree);
+          var model = doc.GetSemanticModelAsync().Result;
+          var symbol = model.GetDeclaredSymbol(info.decl);
+          if (symbol.Interfaces.Any() == false) continue;
+          var newDoc = sol.GetDocument(symbol.Interfaces.First().DeclaringSyntaxReferences[0].SyntaxTree);
+          var cu = (CompilationUnitSyntax) newDoc.GetSyntaxRootAsync().Result;
+          var parentIdent = info.decl.Identifier + "Parent";
+          var partial = SF.ClassDeclaration(info.decl.Identifier)
+            .WithModifiers(addModifier(info.decl.Modifiers, SyntaxKind.PartialKeyword))
+            .WithTypeParameterList(info.decl.TypeParameterList)
+            .WithBaseList(SF.BaseList(SF.SingletonSeparatedList((BaseTypeSyntax)SF.SimpleBaseType(SF.ParseTypeName(parentIdent)))));
+          var parent = SF.ClassDeclaration(parentIdent)
+            .WithModifiers(info.decl.Modifiers)
+            .WithTypeParameterList(info.decl.TypeParameterList);
+          foreach (var info2 in info.getLinearization().Skip(1)) {
+            var members = rewriteGenericParams(info2, info2.Item1.decl.Members);
+            parent = parent.WithMembers(parent.Members.AddRange(members));
+          }
+          handleNamespaces(model, info.decl, partial, ref cu);
+          handleNamespaces(model, info.decl, parent, ref cu);
+          sol = addReplaceDocument(sol.GetDocument(doc.Id).Project, newDoc.Name, cu, ws).Solution;
+        }
+      }
+
       foreach (var doc in sol.allDocs()) {
         var model = doc.GetSemanticModelAsync().Result;
         var root = doc.GetSyntaxRootAsync().Result;
@@ -83,18 +109,7 @@ namespace RoslynTraits {
           foreach (var info2 in classInfo.getLinearization()) {
             if (info2.Item1.decl.Modifiers.hasNot(SyntaxKind.AbstractKeyword)) continue;
             var abs = info2.Item1.decl;
-            var members = abs.Members;
-            var symbol = info2.Item2;
-            var replaces = new List<Tuple<string, string>>();
-            for (var i = 0; i < symbol.Arity; i++) {
-              var str1 = symbol.TypeParameters[0].Name;
-              var str2 = symbol.TypeArguments[0].Name;
-              if (str1 != str2) replaces.Add(Tuple.Create(str1, str2));
-            }
-            if (replaces.Count > 0) {
-              var rewriter = new GenericRewriter(replaces);
-              members = rewriter.VisitList(members);
-            }
+            var members = rewriteGenericParams(info2, abs.Members);
             partial = partial.WithMembers(partial.Members.AddRange(partialMembers(members)));
             worked = true;
           }
@@ -105,6 +120,21 @@ namespace RoslynTraits {
         }
       }
       return sol;
+    }
+
+    static SyntaxList<MemberDeclarationSyntax> rewriteGenericParams(Tuple<Info, INamedTypeSymbol> info2, SyntaxList<MemberDeclarationSyntax> members) {
+      var symbol = info2.Item2;
+      var replaces = new List<Tuple<string, string>>();
+      for (var i = 0; i < symbol.Arity; i++) {
+        var str1 = symbol.TypeParameters[0].Name;
+        var str2 = symbol.TypeArguments[0].Name;
+        if (str1 != str2) replaces.Add(Tuple.Create(str1, str2));
+      }
+      if (replaces.Count > 0) {
+        var rewriter = new GenericRewriter(replaces);
+        members = rewriter.VisitList(members);
+      }
+      return members;
     }
 
     static string nameToInterface(string name) {
@@ -119,7 +149,7 @@ namespace RoslynTraits {
       return new SymbolId(name.nspace, "T" + name.identifier.Substring(1));
     }
 
-    static Project addReplaceDocument(Project proj, string newName, CompilationUnitSyntax cu, MSBuildWorkspace ws) {
+    static Project addReplaceDocument(Project proj, string newName, CompilationUnitSyntax cu, Workspace ws) {
       try {
         proj = proj.RemoveDocument(proj.Documents.First(d => d.Name == newName).Id);
       }
