@@ -32,6 +32,12 @@
     <ErrorReport>prompt</ErrorReport>
     <WarningLevel>4</WarningLevel>
   </PropertyGroup>
+  <PropertyGroup>
+    <SignAssembly>true</SignAssembly>
+  </PropertyGroup>
+  <PropertyGroup>
+    <AssemblyOriginatorKeyFile>me strong.snk</AssemblyOriginatorKeyFile>
+  </PropertyGroup>
   <ItemGroup>
     <Reference Include="Microsoft.CodeAnalysis">
       <HintPath>..\packages\Microsoft.CodeAnalysis.Common.1.0.0-rc1\lib\net45\Microsoft.CodeAnalysis.dll</HintPath>
@@ -90,6 +96,7 @@
   <ItemGroup>
     <Compile Include="Extensions.cs" />
     <Compile Include="BaseTypeRewriter.cs" />
+    <Compile Include="SuperCallsRewriter.cs" />
     <Compile Include="GenericRewriter.cs" />
     <Compile Include="Info.cs" />
     <Compile Include="Program.cs" />
@@ -98,6 +105,7 @@
     <Compile Include="TraitMaker.cs" />
   </ItemGroup>
   <ItemGroup>
+    <None Include="me strong.snk" />
     <None Include="packages.config" />
   </ItemGroup>
   <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />

@@ -30,11 +30,12 @@ namespace RoslynTraits {
               .WithTypeParameterList(abs.TypeParameterList)
               .WithConstraintClauses(abs.ConstraintClauses)
               .WithBaseList(baseRewriter.VisitListElement(abs.BaseList));
-          var interf2 = interf.WithIdentifier(SF.Identifier(nameToExtendableInterface(abs.Identifier.Text)));
+          var extendableInterface = interf
+            .WithIdentifier(SF.Identifier(nameToExtendableInterface(abs.Identifier.Text)));
           interf = interf.WithMembers(SF.List(abs.Members.SelectMany(interfaceMember)));
 
           var id = handleNamespaces(model, abs, interf, ref cu);
-          handleNamespaces(model, abs, interf2, ref cu);
+          handleNamespaces(model, abs, extendableInterface, ref cu);
           listInfos.Add(new Info(new SymbolId(id.nspace, interf.Identifier.Text), abs));
         }
         sol = addReplaceDocument(sol.GetDocument(doc.Id).Project, newName, cu, ws).Solution;
@@ -75,7 +76,17 @@ namespace RoslynTraits {
             .WithTypeParameterList(info.decl.TypeParameterList);
           foreach (var info2 in info.getLinearization().Skip(1)) {
             var members = rewriteGenericParams(info2, info2.Item1.decl.Members);
-            parent = parent.WithMembers(parent.Members.AddRange(members));
+            parent = parent.WithMembers(parent.Members.AddRange(members.Where(m => {
+              if (m is PropertyDeclarationSyntax) {
+                var prop = (PropertyDeclarationSyntax) m;
+                return prop.hasNot(SyntaxKind.OverrideKeyword);
+              }
+              if (m is MethodDeclarationSyntax) {
+                var method = (MethodDeclarationSyntax)m;
+                return method.hasNot(SyntaxKind.OverrideKeyword);
+              }
+              return true;
+            })));
           }
           handleNamespaces(model, info.decl, partial, ref cu);
           handleNamespaces(model, info.decl, parent, ref cu);
@@ -106,11 +117,14 @@ namespace RoslynTraits {
           var partial = SF.ClassDeclaration(tuple.Item1.Identifier)
             .WithModifiers(addModifier(tuple.Item1.Modifiers, SyntaxKind.PartialKeyword))
             .WithTypeParameterList(tuple.Item1.TypeParameterList);
+          var dict = new Dictionary<string, int>();
           foreach (var info2 in classInfo.getLinearization()) {
             if (info2.Item1.decl.Modifiers.hasNot(SyntaxKind.AbstractKeyword)) continue;
             var abs = info2.Item1.decl;
             var members = rewriteGenericParams(info2, abs.Members);
-            partial = partial.WithMembers(partial.Members.AddRange(partialMembers(members)));
+            members = SF.List(partialMembers(members, dict));
+            members = rewriteSuperCalls(dict, members);
+            partial = partial.WithMembers(partial.Members.AddRange(members));
             worked = true;
           }
           handleNamespaces(model, tuple.Item1, partial, ref cu);
@@ -134,6 +148,12 @@ namespace RoslynTraits {
         var rewriter = new GenericRewriter(replaces);
         members = rewriter.VisitList(members);
       }
+      return members;
+    }
+
+    static SyntaxList<MemberDeclarationSyntax> rewriteSuperCalls(Dictionary<string, int> dict, SyntaxList<MemberDeclarationSyntax> members) {
+      var rewriter = new SuperCallsRewriter(dict);
+      members = rewriter.VisitList(members);
       return members;
     }
 
@@ -180,29 +200,53 @@ namespace RoslynTraits {
       return new SymbolId(symbol);
     }
 
-    static IEnumerable<MemberDeclarationSyntax> partialMembers(SyntaxList<MemberDeclarationSyntax> members) {
+    static IEnumerable<MemberDeclarationSyntax> partialMembers(SyntaxList<MemberDeclarationSyntax> members, Dictionary<string, int> dict) {
       var list = new List<MemberDeclarationSyntax>();
       foreach (var member in members) {
+
         if (member is FieldDeclarationSyntax) {
           var field = (FieldDeclarationSyntax)member;
+          field = field.WithDeclaration(field.Declaration.WithVariables(SF.SeparatedList(
+            field.Declaration.Variables.Select(v => {
+              var name = superRewriteName(dict, v.Identifier.Text, field.Modifiers);
+              return v.WithIdentifier(SF.ParseToken(name));
+            })
+          )));
+          field = field.WithModifiers(field.Modifiers.remove(SyntaxKind.OverrideKeyword));
           if (!handlePublicFields(field, list, false)) {
             list.Add(field);
           }
         }
         else if (member is PropertyDeclarationSyntax) {
           var prop = (PropertyDeclarationSyntax)member;
-          list.Add(prop);
+          var name = superRewriteName(dict, prop.Identifier.Text, prop.Modifiers);
+          prop = prop.WithModifiers(prop.Modifiers.remove(SyntaxKind.OverrideKeyword));
+          list.Add(prop.WithIdentifier(SF.ParseToken(name)));
         }
         else if (member is MethodDeclarationSyntax) {
           var method = (MethodDeclarationSyntax)member;
+          var name = superRewriteName(dict, method.Identifier.Text, method.Modifiers);
+          method = method.WithModifiers(method.Modifiers.remove(SyntaxKind.OverrideKeyword));
           if (method.hasNot(SyntaxKind.AbstractKeyword)) {
             method = method.remove(SyntaxKind.OverrideKeyword);
             method = method.remove(SyntaxKind.VirtualKeyword);
-            list.Add(method);
+            list.Add(method.WithIdentifier(SF.ParseToken(name)));
           }
         }
       }
       return list;
+    }
+
+    static string superRewriteName(Dictionary<string, int> dict, string name, SyntaxTokenList tokens) {
+      int parentLevel;
+      if (dict.TryGetValue(name, out parentLevel)) {
+        dict[name] = parentLevel + 1;
+        return SuperCallsRewriter.seperCallOverrideText(parentLevel, name);
+      }
+      else if (tokens.has(SyntaxKind.OverrideKeyword)) {
+        dict[name] = 1;
+      }
+      return name;
     }
 
     static SyntaxTokenList addModifier(SyntaxTokenList modifiers, SyntaxKind kind) {

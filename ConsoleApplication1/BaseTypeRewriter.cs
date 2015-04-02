@@ -13,7 +13,7 @@ namespace RoslynTraits {
     }
 
     public override SyntaxToken VisitToken(SyntaxToken token) {
-      if (!token.IsKind(SyntaxKind.IdentifierName)) return token;
+      if (!token.IsKind(SyntaxKind.IdentifierToken)) return token;
       return rename(token);
     }
 
