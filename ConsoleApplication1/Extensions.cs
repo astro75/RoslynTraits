@@ -48,5 +48,39 @@ namespace RoslynTraits {
     public static SyntaxTokenList remove(this SyntaxTokenList tokens, SyntaxKind kind) {
       return SyntaxFactory.TokenList(tokens.Where(m => !m.IsKind(kind)));
     }
+
+    public static SyntaxTokenList modifiers(this MemberDeclarationSyntax member) {
+      if (member is FieldDeclarationSyntax) {
+        var s = (FieldDeclarationSyntax)member;
+        return s.Modifiers;
+      }
+      if (member is PropertyDeclarationSyntax) {
+        var s = (PropertyDeclarationSyntax)member;
+        return s.Modifiers;
+      }
+      if (member is MethodDeclarationSyntax) {
+        var s = (MethodDeclarationSyntax)member;
+        return s.Modifiers;
+      }
+      return SyntaxFactory.TokenList();
+    }
+
+    public static MemberDeclarationSyntax withModifiers(
+      this MemberDeclarationSyntax member, SyntaxTokenList modifiers
+    ) {
+      if (member is FieldDeclarationSyntax) {
+        var s = (FieldDeclarationSyntax)member;
+        return s.WithModifiers(modifiers);
+      }
+      if (member is PropertyDeclarationSyntax) {
+        var s = (PropertyDeclarationSyntax)member;
+        return s.WithModifiers(modifiers);
+      }
+      if (member is MethodDeclarationSyntax) {
+        var s = (MethodDeclarationSyntax)member;
+        return s.WithModifiers(modifiers);
+      }
+      return member;
+    }
   }
 }

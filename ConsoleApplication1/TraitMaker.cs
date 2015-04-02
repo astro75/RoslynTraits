@@ -256,6 +256,9 @@ namespace RoslynTraits {
 
     static IEnumerable<MemberDeclarationSyntax> interfaceMember(MemberDeclarationSyntax member) {
       var list = new List<MemberDeclarationSyntax>();
+      if (member.modifiers().has(SyntaxKind.OverrideKeyword)) {
+        return list;
+      }
       if (member is FieldDeclarationSyntax) {
         var field = (FieldDeclarationSyntax)member;
         handlePublicFields(field, list, true);
