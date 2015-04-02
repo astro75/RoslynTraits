@@ -36,7 +36,7 @@
     <SignAssembly>true</SignAssembly>
   </PropertyGroup>
   <PropertyGroup>
-    <AssemblyOriginatorKeyFile>me strong.snk</AssemblyOriginatorKeyFile>
+    <AssemblyOriginatorKeyFile>secret for being strong.snk</AssemblyOriginatorKeyFile>
   </PropertyGroup>
   <ItemGroup>
     <Reference Include="Microsoft.CodeAnalysis">
@@ -105,7 +105,7 @@
     <Compile Include="TraitMaker.cs" />
   </ItemGroup>
   <ItemGroup>
-    <None Include="me strong.snk" />
+    <None Include="secret for being strong.snk" />
     <None Include="packages.config" />
   </ItemGroup>
   <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
